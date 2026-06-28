@@ -37,7 +37,10 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     close = df["close"]
     out = pd.DataFrame(index=df.index)
 
-    out["log_ret"] = np.log(close / close.shift(1))
+    # Guard the ratio: anything <= 0 becomes NaN (and is dropped later) instead
+    # of triggering "invalid value encountered in log".
+    ratio = close / close.shift(1)
+    out["log_ret"] = np.log(ratio.where(ratio > 0))
     out["ma5_ratio"] = close / close.rolling(5).mean() - 1
     out["ma10_ratio"] = close / close.rolling(10).mean() - 1
     out["ma20_ratio"] = close / close.rolling(20).mean() - 1
@@ -73,10 +76,26 @@ def build_labels(
     return labels
 
 
+def _drop_nonpositive_prices(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep only the contiguous positive-price tail.
+
+    AKShare's qfq (forward-adjusted) prices can be <= 0 in the oldest history
+    for stocks with large cumulative dividends. Those rows are unusable and also
+    contaminate rolling features, so we drop everything up to and including the
+    last non-positive close (this block is always at the start).
+    """
+    bad = (df["close"] <= 0).to_numpy()
+    if bad.any():
+        last_bad = int(np.flatnonzero(bad).max())
+        df = df.iloc[last_bad + 1 :]
+    return df
+
+
 def build_dataset_frame(
     df: pd.DataFrame, horizons: List[int], flat_threshold: float
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Build features and labels, dropping rows with NaN features (warm-up)."""
+    df = _drop_nonpositive_prices(df)
     features = build_features(df)
     labels = build_labels(df, horizons, flat_threshold)
 
