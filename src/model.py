@@ -14,7 +14,7 @@ from typing import List, Sequence
 
 import torch
 import torch.nn as nn
-from torch.nn.utils import weight_norm
+from torch.nn.utils.parametrizations import weight_norm
 
 
 class Chomp1d(nn.Module):
@@ -33,25 +33,24 @@ class TemporalBlock(nn.Module):
         super().__init__()
         padding = (kernel_size - 1) * dilation
 
-        self.conv1 = weight_norm(
-            nn.Conv1d(in_ch, out_ch, kernel_size, padding=padding, dilation=dilation)
-        )
-        self.conv2 = weight_norm(
-            nn.Conv1d(out_ch, out_ch, kernel_size, padding=padding, dilation=dilation)
-        )
+        # Init the raw conv weights before wrapping: the parametrized weight_norm
+        # exposes `weight` as a computed view, so weights must be set first.
+        self.conv1 = weight_norm(self._conv(in_ch, out_ch, kernel_size, padding, dilation))
+        self.conv2 = weight_norm(self._conv(out_ch, out_ch, kernel_size, padding, dilation))
         self.net = nn.Sequential(
             self.conv1, Chomp1d(padding), nn.ReLU(), nn.Dropout(dropout),
             self.conv2, Chomp1d(padding), nn.ReLU(), nn.Dropout(dropout),
         )
         self.downsample = nn.Conv1d(in_ch, out_ch, 1) if in_ch != out_ch else None
-        self.relu = nn.ReLU()
-        self._init_weights()
-
-    def _init_weights(self):
-        self.conv1.weight.data.normal_(0, 0.01)
-        self.conv2.weight.data.normal_(0, 0.01)
         if self.downsample is not None:
             self.downsample.weight.data.normal_(0, 0.01)
+        self.relu = nn.ReLU()
+
+    @staticmethod
+    def _conv(in_ch, out_ch, kernel_size, padding, dilation):
+        conv = nn.Conv1d(in_ch, out_ch, kernel_size, padding=padding, dilation=dilation)
+        conv.weight.data.normal_(0, 0.01)
+        return conv
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         out = self.net(x)
