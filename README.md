@@ -46,6 +46,16 @@ The best checkpoint (by mean validation accuracy) is written to
 > The notebook auto-detects Colab vs. a local kernel. On a local kernel it
 > imports `src` directly; on Colab it clones `REPO_URL`.
 
+## Tests
+
+The contracts in [SPEC.md](SPEC.md) (no look-ahead leakage, label correctness,
+feature sanity, model output shapes) are enforced by a pytest suite:
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
 ## Modelling notes
 
 - **Labels.** For horizon `h`, the forward return `close[t+h]/close[t] - 1` is
