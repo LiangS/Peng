@@ -19,8 +19,12 @@ src/
   dataset.py   # sliding windows, time-ordered split, feature scaling, class weights
   model.py     # TCN backbone + one softmax head per horizon
   train.py     # multi-task training loop, early stopping, checkpointing
+  train_xgb.py # per-horizon XGBoost classifiers on tabular features
+  compare.py   # train every model on one shared split, print side-by-side
+  plotting.py  # matplotlib training-curve helpers for the notebooks
 notebooks/
-  colab_train.ipynb   # run training + inference on a Colab runtime
+  colab_train_tcn.ipynb   # train TCN + plot curves + inference on Colab
+  colab_train_xgb.ipynb   # same flow for XGBoost
 ```
 
 ## Quick start (local)
@@ -51,15 +55,24 @@ model next to the **majority-class baseline** — the number that actually matte
 
 ## Running on a Colab GPU (recommended)
 
+There is one notebook per model — `notebooks/colab_train_tcn.ipynb` and
+`notebooks/colab_train_xgb.ipynb` — sharing the same setup cell. The TCN
+notebook benefits from a GPU; XGBoost is CPU-bound.
+
 1. Push this repo to GitHub.
-2. Open `notebooks/colab_train.ipynb` in VS Code.
-3. In the kernel picker (top-right), connect to a **Colab** runtime and choose a
-   **GPU** runtime.
+2. Open the notebook you want in VS Code.
+3. In the kernel picker (top-right), connect to a **Colab** runtime (choose a
+   **GPU** runtime for the TCN).
 4. Set `REPO_URL` in the first cell to your repo URL (the Colab VM is a fresh
    cloud machine and can't see your local files), then run all cells.
 
-> The notebook auto-detects Colab vs. a local kernel. On a local kernel it
-> imports `src` directly; on Colab it clones `REPO_URL`.
+> The notebooks auto-detect Colab vs. a local kernel. On a local kernel they
+> import `src` directly; on Colab they clone `REPO_URL`.
+
+Each notebook trains, then **plots its training curves** — the TCN's loss and
+per-horizon validation accuracy per epoch, XGBoost's per-round validation
+log-loss — and finally prints per-horizon direction probabilities for the most
+recent window.
 
 ## Tests
 

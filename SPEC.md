@@ -114,11 +114,26 @@ side-by-side table. Adding a model = add a trainer that returns a
 
 - Loss: mean over horizons of class-weighted cross-entropy.
 - Optimiser AdamW + cosine LR; gradient clipping; early stopping on **mean
-  validation accuracy**; best checkpoint saved with scaler stats and config.
+  validation accuracy**; best checkpoint saved with scaler stats, config, and the
+  per-epoch training `history`.
 - Reported metrics (`metrics.py`, shared by all models): per-horizon
   **accuracy, macro-F1, and majority-class baseline** (+ lift over baseline).
   Class-weighted training makes raw accuracy misleading on its own, so the
   baseline and macro-F1 are always shown alongside it.
+- **Training history.** `train_from_arrays(..., history=[])` records one dict per
+  epoch (`train_loss`, per-horizon `val_acc`, `mean_acc`); `train()` stores it in
+  the checkpoint under `"history"`. XGBoost's per-round validation curve comes from
+  each fitted model's `evals_result()` — `train_xgb` returns `(report, models)` so
+  callers can read it.
+
+## 6a. Visualization (`plotting.py`)
+
+Plotting reads the artifacts above; it never re-runs training.
+`plot_tcn_history(history, horizons)` charts training loss and per-horizon
+validation accuracy vs epoch; `plot_xgb_evals(models, horizons)` charts each
+horizon's validation log-loss vs boosting round. Each returns a matplotlib
+`Figure`. The per-model notebooks (`colab_train_tcn.ipynb`,
+`colab_train_xgb.ipynb`) call these between training and inference.
 
 ## 7. Success criteria
 

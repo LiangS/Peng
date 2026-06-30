@@ -74,7 +74,7 @@ def run_xgb(
     return models, preds, proba, report
 
 
-def train_xgb(cfg: Config) -> Dict:
+def train_xgb(cfg: Config) -> Tuple[Dict, List[xgb.XGBClassifier]]:
     data = prepare_windowed(cfg)
     X_tr, columns = window_to_tabular(data.X_train, data.feature_names)
     X_va, _ = window_to_tabular(data.X_val, data.feature_names)
@@ -95,7 +95,9 @@ def train_xgb(cfg: Config) -> Dict:
     for h, m in zip(cfg.horizons, models):
         m.save_model(os.path.join(outdir, f"h{h}.json"))
     print(f"Saved {len(models)} models to {outdir}/")
-    return report
+    # Models are returned so callers can plot per-round eval curves
+    # (see src.plotting.plot_xgb_evals); each was fit with an eval_set.
+    return report, models
 
 
 def parse_args() -> Config:

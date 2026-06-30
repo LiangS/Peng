@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 import torch
@@ -57,11 +57,16 @@ def collect_predictions(model, loader, device):
     return torch.cat(trues).numpy(), torch.cat(preds).numpy()
 
 
-def train_from_arrays(cfg, X_tr, y_tr, X_va, y_va, class_weights, device=None):
+def train_from_arrays(cfg, X_tr, y_tr, X_va, y_va, class_weights, device=None,
+                      history: Optional[list] = None):
     """Train the TCN on pre-windowed arrays. Returns (best_model, val_report).
 
     Kept separate from data loading so `compare.py` can train the TCN and
     XGBoost on the exact same arrays.
+
+    If `history` is a list, one dict per epoch is appended to it
+    (`train_loss`, per-horizon `val_acc`, `mean_acc`) for later plotting —
+    see `src.plotting.plot_tcn_history`.
     """
     set_seed(cfg.seed)
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -106,10 +111,18 @@ def train_from_arrays(cfg, X_tr, y_tr, X_va, y_va, class_weights, device=None):
         val_acc = evaluate(model, val_loader, cfg.horizons, device)
         mean_acc = float(np.mean(val_acc))
         acc_str = " ".join(f"h{h}={a:.3f}" for h, a in zip(cfg.horizons, val_acc))
+        train_loss = epoch_loss / len(train_ds)
         print(
-            f"epoch {epoch:3d} | loss {epoch_loss / len(train_ds):.4f} "
+            f"epoch {epoch:3d} | loss {train_loss:.4f} "
             f"| val_acc {acc_str} | mean {mean_acc:.3f}"
         )
+        if history is not None:
+            history.append({
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "val_acc": list(val_acc),
+                "mean_acc": mean_acc,
+            })
 
         if mean_acc > best_val:
             best_val, patience = mean_acc, 0
@@ -134,8 +147,10 @@ def train(cfg: Config) -> str:
     data = prepare_windowed(cfg)
     print(f"Features: {data.num_features} | train={len(data.X_train)} val={len(data.X_val)}")
 
+    history: List[dict] = []
     model, report = train_from_arrays(
-        cfg, data.X_train, data.y_train, data.X_val, data.y_val, data.class_weights, device
+        cfg, data.X_train, data.y_train, data.X_val, data.y_val, data.class_weights, device,
+        history=history,
     )
     print(format_report(report, f"TCN ({cfg.symbol})"))
 
@@ -148,6 +163,7 @@ def train(cfg: Config) -> str:
             "scaler_mean": data.scaler_mean,
             "scaler_scale": data.scaler_scale,
             "report": report,
+            "history": history,
         },
         ckpt_path,
     )

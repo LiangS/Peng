@@ -19,7 +19,9 @@ A PyTorch **Temporal Convolutional Network (TCN)** that predicts **multi-horizon
 - `src/train_xgb.py` — per-horizon XGBoost classifiers on tabular features.
 - `src/metrics.py` — shared accuracy / macro-F1 / majority-baseline reporting for all models.
 - `src/compare.py` — trains every model on one shared split, prints side-by-side table.
-- `notebooks/colab_train.ipynb` — clone/pull repo on Colab, train, run inference.
+- `src/plotting.py` — matplotlib training-curve helpers for the notebooks (`plot_tcn_history`, `plot_xgb_evals`).
+- `notebooks/colab_train_tcn.ipynb` — clone/pull repo on Colab, train TCN, plot curves, run inference.
+- `notebooks/colab_train_xgb.ipynb` — same flow for XGBoost.
 
 ## Multi-model design
 
@@ -40,10 +42,10 @@ python -m src.compare --symbol 600519 --epochs 60 # both, side-by-side table
 
 # Syntax/JSON sanity checks
 python -m py_compile src/*.py
-python -c "import json; json.load(open('notebooks/colab_train.ipynb'))"
+python -c "import json; [json.load(open(f)) for f in ('notebooks/colab_train_tcn.ipynb','notebooks/colab_train_xgb.ipynb')]"
 ```
 
-On Colab: set `REPO_URL` in the notebook's first cell, connect a GPU runtime, Run all.
+On Colab: set `REPO_URL` in the notebook's first cell, connect a GPU runtime, Run all. There's one notebook per model (`colab_train_tcn.ipynb`, `colab_train_xgb.ipynb`); both share the same idempotent setup cell.
 
 ## Gotchas (learned the hard way)
 
@@ -53,9 +55,15 @@ On Colab: set `REPO_URL` in the notebook's first cell, connect a GPU runtime, Ru
 - **Validation accuracy is misleading.** The loss uses inverse-frequency class weights, so raw accuracy can sit near chance (~0.33 for 3 classes) while predictions are actually balanced. Always compare against the **majority-class baseline** and prefer **macro-F1 / balanced accuracy**.
 - **XGBoost on macOS needs OpenMP**: `brew install libomp`, else `import xgboost` fails with a `libomp.dylib` load error. (Colab/Linux already have it.)
 - **Edit the notebook via the JSON**, not the Edit tool (it rejects `.ipynb`). When the user runs on Colab, executed outputs live in the editor session, not the file — they must save (⌘S) for outputs to reach disk.
+- **Training-curve plots read existing artifacts, never re-train.** `train()` collects a per-epoch `history` list (passed into `train_from_arrays(..., history=[])`) and stores it in the checkpoint under `checkpoint["history"]`; `train_xgb` returns `(report, models)` (not just `report`) so callers can read each model's `evals_result()`. `plotting.plot_tcn_history` / `plot_xgb_evals` consume those. If you change either return shape, update `plotting.py` and both notebooks.
 
 ## Conventions
 
+- **Keep docs in sync with every change.** Any change that affects layout, public
+  APIs/return shapes, commands, contracts, or workflow must update the relevant
+  docs in the same change: `SPEC.md` (what the system does + contracts),
+  `README.md` (setup/usage/overview), and this file (conventions + gotchas). Treat
+  a code change with stale docs as incomplete.
 - Keep all tunables in `Config`; thread them through, don't hardcode.
 - Use `torch.nn.utils.parametrizations.weight_norm` (not the deprecated `torch.nn.utils.weight_norm`); init conv weights **before** wrapping.
 - Don't commit notebooks with executed outputs baked in; strip them first.
