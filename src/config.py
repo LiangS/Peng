@@ -22,10 +22,14 @@ class Config:
     # --- Labels -------------------------------------------------------------
     # Predict directional class at each horizon (trading days into the future).
     horizons: List[int] = field(default_factory=lambda: [1, 5, 20])
-    # 3-class: 0=down, 1=flat, 2=up. A move within +/- flat_threshold is "flat".
-    # The threshold scales with sqrt(horizon) so longer horizons get a wider band.
-    flat_threshold: float = 0.005     # 0.5% per-day-equivalent band
-    num_classes: int = 3
+    # Per-day-equivalent return edges, each scaled by sqrt(horizon) so longer
+    # horizons get proportionally wider bands. The list is mirrored around zero
+    # into 2*len+1 symmetric buckets (low class = biggest drop, high = biggest
+    # gain). Default edges [0.5%, 2%, 5%] -> 7 classes:
+    #   0 down>5% | 1 down2-5% | 2 down0.5-2% | 3 flat(+/-0.5%)
+    #   | 4 up0.5-2% | 5 up2-5% | 6 up>5%
+    class_thresholds: List[float] = field(default_factory=lambda: [0.005, 0.02, 0.05])
+    num_classes: int = field(init=False, default=7)  # derived in __post_init__
 
     # --- Windowing ----------------------------------------------------------
     window: int = 60                  # look-back length fed to the TCN
@@ -47,6 +51,10 @@ class Config:
 
     # --- IO -----------------------------------------------------------------
     ckpt_dir: str = "checkpoints"
+
+    def __post_init__(self) -> None:
+        # num_classes is fully determined by the symmetric threshold list.
+        self.num_classes = 2 * len(self.class_thresholds) + 1
 
     @property
     def receptive_field(self) -> int:

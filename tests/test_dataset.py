@@ -26,7 +26,7 @@ def test_windows_skip_unknown_future_labels():
 
 
 def test_time_split_no_leakage(trending_ohlcv):
-    feats, labels = build_dataset_frame(trending_ohlcv, [1, 5, 20], 0.005)
+    feats, labels = build_dataset_frame(trending_ohlcv, [1, 5, 20], [0.005])
     window, val_ratio = 30, 0.2
     data = build_windowed_data(feats, labels, window, val_ratio, num_classes=3)
 
@@ -44,7 +44,7 @@ def test_time_split_no_leakage(trending_ohlcv):
 
 
 def test_scaler_fit_on_train_rows_only(trending_ohlcv):
-    feats, labels = build_dataset_frame(trending_ohlcv, [1, 5, 20], 0.005)
+    feats, labels = build_dataset_frame(trending_ohlcv, [1, 5, 20], [0.005])
     val_ratio = 0.2
     data = build_windowed_data(feats, labels, window=30, val_ratio=val_ratio, num_classes=3)
 
@@ -54,7 +54,7 @@ def test_scaler_fit_on_train_rows_only(trending_ohlcv):
 
 
 def test_class_weights_shape(trending_ohlcv):
-    feats, labels = build_dataset_frame(trending_ohlcv, [1, 5, 20], 0.005)
+    feats, labels = build_dataset_frame(trending_ohlcv, [1, 5, 20], [0.005])
     data = build_windowed_data(feats, labels, window=30, val_ratio=0.2, num_classes=3)
     assert len(data.class_weights) == 3              # one per horizon
     for w in data.class_weights:

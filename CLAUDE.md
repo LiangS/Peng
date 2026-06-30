@@ -4,7 +4,7 @@ Guidance for working in this repo. See [README.md](README.md) for the full proje
 
 ## What this is
 
-A PyTorch **Temporal Convolutional Network (TCN)** that predicts **multi-horizon directional trend** for Chinese A-shares. One shared TCN backbone feeds **one softmax head per horizon** (`[1, 5, 20]` trading days), each emitting a distribution over `{down, flat, up}`. Data comes from **AKShare**; training is meant to run on a **Colab GPU runtime** via the VS Code Google Colab extension, with code version-controlled here.
+A PyTorch **Temporal Convolutional Network (TCN)** that predicts **multi-horizon directional trend** for Chinese A-shares. One shared TCN backbone feeds **one softmax head per horizon** (`[1, 5, 20]` trading days), each emitting a distribution over **symmetric return buckets** (`Config.class_thresholds`, default `[0.5%, 2%, 5%]` → 7 classes from `down >5%` to `up >5%`; `num_classes = 2*len+1`). Data comes from **AKShare**; training is meant to run on a **Colab GPU runtime** via the VS Code Google Colab extension, with code version-controlled here.
 
 ## Layout
 
@@ -52,7 +52,7 @@ On Colab: set `REPO_URL` in the notebook's first cell, connect a GPU runtime, Ru
 - **AKShare `qfq` prices can be ≤ 0** in the oldest history (dividend subtraction). They break `log` returns and contaminate rolling features. `features._drop_nonpositive_prices` drops the leading bad block; the log-return ratio is also guarded. Don't remove these.
 - **No look-ahead leakage** is load-bearing: train/val split is strictly time-ordered, the scaler is fit on train rows only, and a window is dropped if its future label is unknown. Preserve this whenever touching `dataset.py`.
 - **Colab clone must stay idempotent.** The setup cell pins an absolute `REPO_DIR=/content/Peng` and removes any nested `/content/Peng/Peng` before clone/pull — re-running it from inside the checkout previously created a nested copy running stale code.
-- **Validation accuracy is misleading.** The loss uses inverse-frequency class weights, so raw accuracy can sit near chance (~0.33 for 3 classes) while predictions are actually balanced. Always compare against the **majority-class baseline** and prefer **macro-F1 / balanced accuracy**.
+- **Validation accuracy is misleading.** The loss uses inverse-frequency class weights, so raw accuracy can sit near chance (~`1/num_classes`; ~0.14 for the default 7 buckets) while predictions are actually balanced. Always compare against the **majority-class baseline** and prefer **macro-F1 / balanced accuracy**. More buckets also split the data thinner — collapse them (e.g. `class_thresholds=[0.005]` for down/flat/up) if the tail classes stay empty.
 - **XGBoost on macOS needs OpenMP**: `brew install libomp`, else `import xgboost` fails with a `libomp.dylib` load error. (Colab/Linux already have it.)
 - **Edit the notebook via the JSON**, not the Edit tool (it rejects `.ipynb`). When the user runs on Colab, executed outputs live in the editor session, not the file — they must save (⌘S) for outputs to reach disk.
 - **Training-curve plots read existing artifacts, never re-train.** `train()` collects a per-epoch `history` list (passed into `train_from_arrays(..., history=[])`) and stores it in the checkpoint under `checkpoint["history"]`; `train_xgb` returns `(report, models)` (not just `report`) so callers can read each model's `evals_result()`. `plotting.plot_tcn_history` / `plot_xgb_evals` consume those. If you change either return shape, update `plotting.py` and both notebooks.
@@ -70,4 +70,4 @@ On Colab: set `REPO_URL` in the notebook's first cell, connect a GPU runtime, Ru
 
 ## Modelling status / next steps
 
-First single-symbol baseline sits at chance (~0.33). Highest-leverage improvements, in order: (1) report majority-class baseline + macro-F1, (2) **train across many symbols** (one stock ≈ 1,850 days is too little data; window each symbol independently — never across symbols), (3) cheap knobs: try binary up/down, widen `flat_threshold`, lower `lr`. Daily direction is near-random; ~53–55% is a genuinely good result.
+First single-symbol baseline sits at chance (~`1/num_classes`). Highest-leverage improvements, in order: (1) report majority-class baseline + macro-F1, (2) **train across many symbols** (one stock ≈ 1,850 days is too little data; window each symbol independently — never across symbols), (3) cheap knobs: fewer buckets via `class_thresholds` (e.g. `[0.005]` for binary-ish up/down), widen the bands, lower `lr`. Daily direction is near-random; ~53–55% directional (binary) is a genuinely good result.

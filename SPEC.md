@@ -15,8 +15,11 @@ are trained on one shared dataset and compared with identical metrics. New
 models plug into the same `prepare_windowed` → metrics flow.
 
 - Horizons (trading days): `1, 5, 20` (configurable).
-- For each horizon, output a probability distribution over three classes:
-  `0 = down`, `1 = flat`, `2 = up` (softmax).
+- For each horizon, output a probability distribution (softmax) over
+  `num_classes` **symmetric return buckets**. The bucket edges come from
+  `Config.class_thresholds` (default `[0.5%, 2%, 5%]` → 7 classes); `num_classes`
+  is derived as `2*len(class_thresholds)+1`. Class 0 = biggest drop, the middle
+  class = flat, the last class = biggest gain.
 - This is a **multi-task classification** problem: one shared representation,
   one independent prediction per horizon.
 
@@ -53,10 +56,14 @@ be roughly stationary:
 | `hl_range`    | `(high - low) / close`                      |
 
 **Labels** (`features.build_labels`). For horizon `h`, forward return
-`r = close_{t+h}/close_t - 1`; band `= flat_threshold * sqrt(h)`:
-`up (2)` if `r > band`, `down (0)` if `r < -band`, else `flat (1)`.
-Rows whose future price is unknown (last `h` rows) are `NaN` and dropped from
-training windows.
+`r = close_{t+h}/close_t - 1`. The sorted positive `class_thresholds` are each
+scaled by `sqrt(h)` (so longer horizons aren't dominated by drift) and mirrored
+around zero into ascending boundaries; the bucket is `np.digitize(r, edges)`,
+giving classes `0 .. 2*len(thresholds)`. Example for `[0.005, 0.02, 0.05]`:
+`0 down>5%, 1 down2-5%, 2 down0.5-2%, 3 flat(±0.5%), 4 up0.5-2%, 5 up2-5%,
+6 up>5%` (edges shown at `h=1`). `features.class_names(thresholds)` returns the
+human-readable label per class. Rows whose future price is unknown (last `h`
+rows) are `NaN` and dropped from training windows.
 
 **Pipeline contract** (`features.build_dataset_frame`):
 1. Drop the leading block of non-positive-`close` rows (`_drop_nonpositive_prices`).
@@ -144,7 +151,9 @@ horizon's validation log-loss vs boosting round. Each returns a matplotlib
   out-of-sample. Daily direction is near-random; sustained **53–55%** directional
   accuracy across many symbols is a strong result. A single symbol (~1,850 days)
   is expected to sit near chance — multi-symbol training is the intended path to
-  signal.
+  signal. Note: finer buckets lower per-class chance (≈1/`num_classes`) and split
+  the data thinner, so judge them by **macro-F1 and lift over the baseline**, not
+  raw accuracy, and collapse buckets if the tails stay empty.
 
 ## 8. Open items / roadmap
 
@@ -155,5 +164,6 @@ horizon's validation log-loss vs boosting round. Each returns a matplotlib
    across symbols), to expand the dataset by orders of magnitude. (Biggest
    expected lift; applies to all models.)
 4. Optional: more model families (LightGBM, logistic-regression baseline);
-   binary up/down variant; widen `flat_threshold`; richer features.
+   tune `class_thresholds` (fewer/coarser buckets, e.g. `[0.005]` for down/flat/up);
+   richer features.
 5. Optional: push checkpoints to Hugging Face so they survive Colab resets.

@@ -2,8 +2,9 @@
 
 A PyTorch Temporal Convolutional Network (TCN) that predicts **directional trend
 at multiple horizons** (1, 5, and 20 trading days). Each horizon has its own
-softmax head, so the model outputs a probability distribution over
-`{down, flat, up}` for every horizon independently.
+softmax head, so the model outputs a probability distribution over symmetric
+**return buckets** for every horizon independently (default 7:
+`down >5% … flat … up >5%`, configurable via `class_thresholds`).
 
 Data comes from **AKShare** (Chinese A-share daily OHLCV). Code lives locally;
 training is meant to run on a **Colab GPU runtime** via the VS Code Google Colab
@@ -87,8 +88,10 @@ pytest -q
 ## Modelling notes
 
 - **Labels.** For horizon `h`, the forward return `close[t+h]/close[t] - 1` is
-  bucketed into down / flat / up. The flat band widens with `sqrt(h)` so longer
-  horizons aren't swamped by drift. Tune `flat_threshold` in `config.py`.
+  bucketed into symmetric return classes whose edges (`class_thresholds`, default
+  `[0.5%, 2%, 5%]` → 7 classes) each widen with `sqrt(h)` so longer horizons
+  aren't swamped by drift. `num_classes` is derived as `2*len+1`; set
+  `class_thresholds` in `config.py` (e.g. `[0.005]` for plain down/flat/up).
 - **No leakage.** The train/val split is strictly time-ordered; the scaler is fit
   on training rows only, and a window is dropped if its future label is unknown.
 - **Class imbalance** is handled with inverse-frequency class weights per horizon.

@@ -36,7 +36,7 @@ class PreparedData:
 
 def prepare_windowed(cfg: Config) -> PreparedData:
     prices = load_prices(cfg.symbol, cfg.start_date, cfg.end_date, cfg.adjust, cfg.cache_dir)
-    features, labels = build_dataset_frame(prices, cfg.horizons, cfg.flat_threshold)
+    features, labels = build_dataset_frame(prices, cfg.horizons, cfg.class_thresholds)
     data = build_windowed_data(features, labels, cfg.window, cfg.val_ratio, cfg.num_classes)
 
     X_tr, y_tr = data.train.tensors
