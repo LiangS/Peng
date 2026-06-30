@@ -16,13 +16,12 @@ from typing import List
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
 from .config import Config
-from .data import load_prices
-from .dataset import build_windowed_data
-from .features import build_dataset_frame
+from .metrics import format_report, horizon_report
 from .model import MultiHorizonTCN
+from .prepare import prepare_windowed
 
 
 def set_seed(seed: int) -> None:
@@ -46,23 +45,34 @@ def evaluate(model, loader, horizons, device) -> List[float]:
     return (correct / max(total, 1)).tolist()
 
 
-def train(cfg: Config) -> str:
+@torch.no_grad()
+def collect_predictions(model, loader, device):
+    """Gather (y_true, y_pred) as (N, num_horizons) int arrays for reporting."""
+    model.eval()
+    trues, preds = [], []
+    for x, y in loader:
+        logits = model(x.to(device))
+        preds.append(torch.stack([lg.argmax(-1).cpu() for lg in logits], dim=1))
+        trues.append(y)
+    return torch.cat(trues).numpy(), torch.cat(preds).numpy()
+
+
+def train_from_arrays(cfg, X_tr, y_tr, X_va, y_va, class_weights, device=None):
+    """Train the TCN on pre-windowed arrays. Returns (best_model, val_report).
+
+    Kept separate from data loading so `compare.py` can train the TCN and
+    XGBoost on the exact same arrays.
+    """
     set_seed(cfg.seed)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Device: {device} | receptive field: {cfg.receptive_field} steps")
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
-    # --- Data ---------------------------------------------------------------
-    prices = load_prices(cfg.symbol, cfg.start_date, cfg.end_date, cfg.adjust, cfg.cache_dir)
-    features, labels = build_dataset_frame(prices, cfg.horizons, cfg.flat_threshold)
-    data = build_windowed_data(features, labels, cfg.window, cfg.val_ratio, cfg.num_classes)
-    print(f"Features: {data.num_features} | train={len(data.train)} val={len(data.val)}")
+    train_ds = TensorDataset(torch.from_numpy(X_tr), torch.from_numpy(y_tr))
+    val_ds = TensorDataset(torch.from_numpy(X_va), torch.from_numpy(y_va))
+    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, drop_last=True)
+    val_loader = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False)
 
-    train_loader = DataLoader(data.train, batch_size=cfg.batch_size, shuffle=True, drop_last=True)
-    val_loader = DataLoader(data.val, batch_size=cfg.batch_size, shuffle=False)
-
-    # --- Model / optim ------------------------------------------------------
     model = MultiHorizonTCN(
-        num_features=data.num_features,
+        num_features=X_tr.shape[1],
         horizons=cfg.horizons,
         num_classes=cfg.num_classes,
         channels=cfg.channels,
@@ -70,16 +80,14 @@ def train(cfg: Config) -> str:
         dropout=cfg.dropout,
     ).to(device)
 
-    criteria = [nn.CrossEntropyLoss(weight=w.to(device)) for w in data.class_weights]
+    criteria = [
+        nn.CrossEntropyLoss(weight=torch.tensor(w, dtype=torch.float32, device=device))
+        for w in class_weights
+    ]
     optim = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=cfg.epochs)
 
-    os.makedirs(cfg.ckpt_dir, exist_ok=True)
-    ckpt_path = os.path.join(cfg.ckpt_dir, f"tcn_{cfg.symbol}.pt")
-
-    best_val = -1.0
-    patience = 0
-
+    best_val, best_state, patience = -1.0, None, 0
     for epoch in range(1, cfg.epochs + 1):
         model.train()
         epoch_loss = 0.0
@@ -99,30 +107,51 @@ def train(cfg: Config) -> str:
         mean_acc = float(np.mean(val_acc))
         acc_str = " ".join(f"h{h}={a:.3f}" for h, a in zip(cfg.horizons, val_acc))
         print(
-            f"epoch {epoch:3d} | loss {epoch_loss / len(data.train):.4f} "
+            f"epoch {epoch:3d} | loss {epoch_loss / len(train_ds):.4f} "
             f"| val_acc {acc_str} | mean {mean_acc:.3f}"
         )
 
         if mean_acc > best_val:
-            best_val = mean_acc
-            patience = 0
-            torch.save(
-                {
-                    "model_state": model.state_dict(),
-                    "config": cfg.__dict__,
-                    "scaler_mean": data.scaler.mean_,
-                    "scaler_scale": data.scaler.scale_,
-                    "val_acc": val_acc,
-                },
-                ckpt_path,
-            )
+            best_val, patience = mean_acc, 0
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
         else:
             patience += 1
             if patience >= cfg.early_stop_patience:
                 print(f"Early stopping at epoch {epoch} (best mean val_acc={best_val:.3f})")
                 break
 
-    print(f"Best mean val accuracy: {best_val:.3f} | checkpoint: {ckpt_path}")
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    y_true, y_pred = collect_predictions(model, val_loader, device)
+    report = horizon_report(y_true, y_pred, cfg.horizons, cfg.num_classes)
+    return model, report
+
+
+def train(cfg: Config) -> str:
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Device: {device} | receptive field: {cfg.receptive_field} steps")
+
+    data = prepare_windowed(cfg)
+    print(f"Features: {data.num_features} | train={len(data.X_train)} val={len(data.X_val)}")
+
+    model, report = train_from_arrays(
+        cfg, data.X_train, data.y_train, data.X_val, data.y_val, data.class_weights, device
+    )
+    print(format_report(report, f"TCN ({cfg.symbol})"))
+
+    os.makedirs(cfg.ckpt_dir, exist_ok=True)
+    ckpt_path = os.path.join(cfg.ckpt_dir, f"tcn_{cfg.symbol}.pt")
+    torch.save(
+        {
+            "model_state": model.state_dict(),
+            "config": cfg.__dict__,
+            "scaler_mean": data.scaler_mean,
+            "scaler_scale": data.scaler_scale,
+            "report": report,
+        },
+        ckpt_path,
+    )
+    print(f"Checkpoint: {ckpt_path}")
     return ckpt_path
 
 

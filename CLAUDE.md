@@ -13,15 +13,30 @@ A PyTorch **Temporal Convolutional Network (TCN)** that predicts **multi-horizon
 - `src/features.py` — technical features + 3-class forward-direction labels.
 - `src/dataset.py` — sliding windows, time-ordered split, train-only scaler, class weights.
 - `src/model.py` — `MultiHorizonTCN` (dilated causal convs + per-horizon heads).
-- `src/train.py` — multi-task weighted-CE loop, early stopping, checkpointing.
+- `src/train.py` — TCN: weighted-CE loop, early stopping, checkpointing; `train_from_arrays` is the reusable core.
+- `src/prepare.py` — `prepare_windowed(cfg)`: builds the shared windowed arrays all models consume (fair comparison).
+- `src/tabular.py` — projects windows to tree-friendly tabular features (lags + mean/std).
+- `src/train_xgb.py` — per-horizon XGBoost classifiers on tabular features.
+- `src/metrics.py` — shared accuracy / macro-F1 / majority-baseline reporting for all models.
+- `src/compare.py` — trains every model on one shared split, prints side-by-side table.
 - `notebooks/colab_train.ipynb` — clone/pull repo on Colab, train, run inference.
+
+## Multi-model design
+
+This is a **model-comparison** project. The invariant: every model trains on the
+identical output of `prepare.prepare_windowed(cfg)` so differences reflect models,
+not data. To add a model, write a trainer that returns a `metrics.horizon_report`
+(N×H preds) and register it in `compare.py`. TCN eats raw windows; tree models eat
+`tabular.window_to_tabular` of the same windows.
 
 ## Commands
 
 ```bash
 # Local (CPU is fine; the model is small)
 pip install -r requirements.txt
-python -m src.train --symbol 600519 --epochs 60   # writes checkpoints/tcn_<symbol>.pt
+python -m src.train --symbol 600519 --epochs 60   # TCN  -> checkpoints/tcn_<symbol>.pt
+python -m src.train_xgb --symbol 600519           # XGB  -> checkpoints/xgb_<symbol>/
+python -m src.compare --symbol 600519 --epochs 60 # both, side-by-side table
 
 # Syntax/JSON sanity checks
 python -m py_compile src/*.py
@@ -36,6 +51,7 @@ On Colab: set `REPO_URL` in the notebook's first cell, connect a GPU runtime, Ru
 - **No look-ahead leakage** is load-bearing: train/val split is strictly time-ordered, the scaler is fit on train rows only, and a window is dropped if its future label is unknown. Preserve this whenever touching `dataset.py`.
 - **Colab clone must stay idempotent.** The setup cell pins an absolute `REPO_DIR=/content/Peng` and removes any nested `/content/Peng/Peng` before clone/pull — re-running it from inside the checkout previously created a nested copy running stale code.
 - **Validation accuracy is misleading.** The loss uses inverse-frequency class weights, so raw accuracy can sit near chance (~0.33 for 3 classes) while predictions are actually balanced. Always compare against the **majority-class baseline** and prefer **macro-F1 / balanced accuracy**.
+- **XGBoost on macOS needs OpenMP**: `brew install libomp`, else `import xgboost` fails with a `libomp.dylib` load error. (Colab/Linux already have it.)
 - **Edit the notebook via the JSON**, not the Edit tool (it rejects `.ipynb`). When the user runs on Colab, executed outputs live in the editor session, not the file — they must save (⌘S) for outputs to reach disk.
 
 ## Conventions

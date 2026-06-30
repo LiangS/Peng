@@ -10,6 +10,10 @@ system does and the contracts each component must uphold; the test suite under
 Given the recent daily price history of a Chinese A-share, predict the
 **direction of future price movement at multiple horizons simultaneously**.
 
+This is a **multi-model** project: several model families (TCN, XGBoost, ...)
+are trained on one shared dataset and compared with identical metrics. New
+models plug into the same `prepare_windowed` → metrics flow.
+
 - Horizons (trading days): `1, 5, 20` (configurable).
 - For each horizon, output a probability distribution over three classes:
   `0 = down`, `1 = flat`, `2 = up` (softmax).
@@ -77,7 +81,23 @@ training windows.
 - **Class weights**: inverse-frequency per horizon, computed from the training
   split, for use in the loss.
 
-## 5. Model (`model.MultiHorizonTCN`)
+## 4a. Shared prep & model interface
+
+`prepare.prepare_windowed(cfg)` runs §3–§4 once and returns numpy arrays
+(`X_train/X_val` as `(N, F, window)`, `y_*` as `(N, H)`, class weights, scaler
+stats). Every model trains on this identical output:
+
+- **TCN** consumes the windows directly (`train.train_from_arrays`).
+- **XGBoost** consumes a tabular projection of the same windows
+  (`tabular.window_to_tabular`: each feature at lags `{0,1,5,20}` from the window
+  end, plus window mean/std → `F*6` columns), with one classifier per horizon
+  (`train_xgb.run_xgb`).
+
+`compare.py` trains all models on one `prepare_windowed` result and prints a
+side-by-side table. Adding a model = add a trainer that returns a
+`horizon_report` and register it in `compare`.
+
+## 5. TCN model (`model.MultiHorizonTCN`)
 
 - TCN backbone: stacked **dilated causal** 1-D conv residual blocks
   (Bai et al. 2018), dilation `2**i`, weight-normalised via
@@ -95,9 +115,10 @@ training windows.
 - Loss: mean over horizons of class-weighted cross-entropy.
 - Optimiser AdamW + cosine LR; gradient clipping; early stopping on **mean
   validation accuracy**; best checkpoint saved with scaler stats and config.
-- Reported metrics: per-horizon accuracy (current). **Planned**: majority-class
-  baseline and macro-F1 per horizon, because class-weighted training makes raw
-  accuracy a misleading headline number.
+- Reported metrics (`metrics.py`, shared by all models): per-horizon
+  **accuracy, macro-F1, and majority-class baseline** (+ lift over baseline).
+  Class-weighted training makes raw accuracy misleading on its own, so the
+  baseline and macro-F1 are always shown alongside it.
 
 ## 7. Success criteria
 
@@ -112,8 +133,12 @@ training windows.
 
 ## 8. Open items / roadmap
 
-1. Add majority-baseline + macro-F1 reporting to `train.py` (§6).
-2. Multi-symbol training: pool many tickers, window each **independently** (never
-   across symbols), to expand the dataset by orders of magnitude.
-3. Optional: binary up/down variant; widen `flat_threshold`; richer features.
-4. Optional: push checkpoints to Hugging Face so they survive Colab resets.
+1. ~~Majority-baseline + macro-F1 reporting~~ — done (`metrics.py`).
+2. ~~Second model family (XGBoost) for comparison~~ — done (`train_xgb.py`,
+   `compare.py`).
+3. Multi-symbol training: pool many tickers, window each **independently** (never
+   across symbols), to expand the dataset by orders of magnitude. (Biggest
+   expected lift; applies to all models.)
+4. Optional: more model families (LightGBM, logistic-regression baseline);
+   binary up/down variant; widen `flat_threshold`; richer features.
+5. Optional: push checkpoints to Hugging Face so they survive Colab resets.

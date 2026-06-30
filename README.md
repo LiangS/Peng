@@ -28,11 +28,26 @@ notebooks/
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python -m src.train --symbol 600519 --epochs 60
+# macOS only, for XGBoost's OpenMP runtime:
+brew install libomp
+
+python -m src.train     --symbol 600519 --epochs 60   # TCN
+python -m src.train_xgb --symbol 600519               # XGBoost
+python -m src.compare   --symbol 600519 --epochs 60   # both, side-by-side
 ```
 
-The best checkpoint (by mean validation accuracy) is written to
-`checkpoints/tcn_<symbol>.pt` along with the scaler stats and config.
+The TCN's best checkpoint (by mean validation accuracy) is written to
+`checkpoints/tcn_<symbol>.pt` with scaler stats and config; XGBoost models go to
+`checkpoints/xgb_<symbol>/h{horizon}.json`.
+
+## Comparing models
+
+This repo trains multiple model families on the **same** windowed train/val
+split and reports identical metrics, so results are directly comparable.
+`python -m src.compare` prints per-horizon **accuracy / macro-F1** for each
+model next to the **majority-class baseline** — the number that actually matters
+(beating it is the bar). Add a model by writing a trainer that returns a
+`metrics.horizon_report` and registering it in [src/compare.py](src/compare.py).
 
 ## Running on a Colab GPU (recommended)
 
